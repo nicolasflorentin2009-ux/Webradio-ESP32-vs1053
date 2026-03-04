@@ -1,0 +1,2213 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <secrets.h>
+
+// ================= DISPLAY =================
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25,
+  26,
+  27
+);
+
+// ================= VS1053 =================
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// ================= ENCODER =================
+#define ENC_CLK 35
+#define ENC_DT  34
+#define ENC_SW  32
+
+int volume = 70;
+int lastCLK;
+
+// ================= WIFI =================
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+const char* host = "ic.radiomonster.fm";
+const char* path = "/evergreens.ultra";
+const int httpPort = 80;
+
+// größerer Buffer
+uint8_t mp3buff[128];
+
+bool headerSkipped = false;
+
+// =========================================
+
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  u8g2.setFont(u8g2_font_logisoso18_tf);
+  u8g2.drawStr(0, 20, "WEBRADIO");
+
+  char volText[20];
+  sprintf(volText, "%d %%", volume);
+
+  u8g2.setFont(u8g2_font_logisoso22_tf);
+  u8g2.drawStr(0, 63, volText);
+
+  u8g2.sendBuffer();
+}
+
+// =========================================
+
+void connectToStream()
+{
+  Serial.println("Verbinde Stream");
+
+  client.stop();
+  headerSkipped = false;
+
+  if (!client.connect(host, httpPort))
+  {
+    Serial.println("Stream Fehler");
+    return;
+  }
+
+  client.print(String("GET ") + path + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("Stream verbunden");
+}
+
+// =========================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK, INPUT_PULLUP);
+  pinMode(ENC_DT, INPUT_PULLUP);
+  pinMode(ENC_SW, INPUT_PULLUP);
+
+  lastCLK = digitalRead(ENC_CLK);
+
+  // Display SPI
+  SPI.begin(14, -1, 13, 25);
+  u8g2.begin();
+
+  // VS1053 SPI
+  VSPIbus.begin(18, 19, 23, 5);
+  VSPIbus.setFrequency(1000000);
+
+  if (!player.begin())
+  {
+    Serial.println("VS1053 Fehler");
+    while(true);
+  }
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  Serial.println("VS1053 OK");
+
+  WiFi.begin(ssid, password);
+
+  Serial.print("Verbinde WLAN");
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WLAN verbunden");
+
+  connectToStream();
+}
+
+// =========================================
+
+void handleEncoder()
+{
+  int currentCLK = digitalRead(ENC_CLK);
+
+  if (currentCLK != lastCLK)
+  {
+    if (digitalRead(ENC_DT) != currentCLK)
+      volume++;
+    else
+      volume--;
+
+    volume = constrain(volume, 0, 100);
+    player.setVolume(volume);
+  }
+
+  lastCLK = currentCLK;
+}
+
+// =========================================
+
+void handleStream()
+{
+  if (!client.connected())
+    connectToStream();
+
+  if (!client.available())
+    return;
+
+  if (!headerSkipped)
+  {
+    String line = client.readStringUntil('\n');
+
+    if (line == "\r")
+    {
+      headerSkipped = true;
+      Serial.println("Stream Start");
+    }
+  }
+  else
+  {
+    if (digitalRead(VS1053_DREQ))
+    {
+      int bytesread = client.read(mp3buff, sizeof(mp3buff));
+
+      if (bytesread > 0)
+        player.playChunk(mp3buff, bytesread);
+    }
+  }
+}
+
+// =========================================
+
+void loop()
+{
+  handleEncoder();
+  handleStream();
+  drawScreen();
+}
+
+
+
+
+
+
+-------------------------------------------------------------
+
+
+
+
+
+
+
+1. Pinbelegung
+VS1053 (MP3 Decoder)
+
+VS1053 Pin	ESP32 Pin
+SI (MOSI)	GPIO23
+SO (MISO)	GPIO19
+SCLK	GPIO18
+XCS	GPIO5
+XDCS	GPIO16
+DREQ	GPIO4
+XRST	GPIO17
+VIN	5V
+GND	GND
+
+Display (SH1106 SPI)
+Display Pin	ESP32
+SCK	GPIO14
+SDA (MOSI)	GPIO13
+CS	GPIO25
+DC	GPIO26
+RES	GPIO27
+VCC	3.3V
+GND	GND
+
+Encoder
+
+
+Encoder	ESP32
+CLK	GPIO35
+DT	GPIO34
+SW	GPIO32
++	3.3V
+GND	GND
+
+--------------------------------------------------------------------------------------------------------
+
+schön drehpoti und schönes radio
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <secrets.h>
+
+// ================= DISPLAY =================
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25,
+  26,
+  27
+);
+
+// ================= VS1053 =================
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// ================= ENCODER =================
+#define ENC_CLK 35
+#define ENC_DT  34
+#define ENC_SW  32
+
+int volume = 70;
+int lastCLK;
+
+// ================= WIFI =================
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+const char* host = "ic.radiomonster.fm";
+const char* path = "/evergreens.ultra";
+const int httpPort = 80;
+
+// Audio Buffer
+uint8_t mp3buff[512];
+
+bool headerSkipped = false;
+
+// Display Timer
+unsigned long lastDisplay = 0;
+
+// =========================================
+
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  u8g2.setFont(u8g2_font_logisoso18_tf);
+  u8g2.drawStr(0, 20, "WEBRADIO");
+
+  char volText[20];
+  sprintf(volText, "%d %%", volume);
+
+  u8g2.setFont(u8g2_font_logisoso22_tf);
+  u8g2.drawStr(0, 63, volText);
+
+  u8g2.sendBuffer();
+}
+
+// =========================================
+
+void connectToStream()
+{
+  Serial.println("Verbinde Stream");
+
+  client.stop();
+  headerSkipped = false;
+
+  if (!client.connect(host, httpPort))
+  {
+    Serial.println("Stream Fehler");
+    return;
+  }
+
+  client.print(String("GET ") + path + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("Stream verbunden");
+}
+
+// =========================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK, INPUT_PULLUP);
+  pinMode(ENC_DT, INPUT_PULLUP);
+  pinMode(ENC_SW, INPUT_PULLUP);
+
+  lastCLK = digitalRead(ENC_CLK);
+
+  // Display SPI
+  SPI.begin(14, -1, 13, 25);
+  u8g2.begin();
+
+  // VS1053 SPI
+  VSPIbus.begin(18, 19, 23, 5);
+  VSPIbus.setFrequency(4000000);
+
+  if (!player.begin())
+  {
+    Serial.println("VS1053 Fehler");
+    while(true);
+  }
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  Serial.println("VS1053 OK");
+
+  WiFi.begin(ssid, password);
+
+  Serial.print("Verbinde WLAN");
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WLAN verbunden");
+
+  connectToStream();
+}
+
+// =========================================
+
+void handleEncoder()
+{
+  static unsigned long lastTurn = 0;
+
+  int currentCLK = digitalRead(ENC_CLK);
+
+  if (currentCLK != lastCLK && currentCLK == LOW)
+  {
+    if (millis() - lastTurn > 2)   // Entprellen
+    {
+      if (digitalRead(ENC_DT) != currentCLK)
+        volume++;
+      else
+        volume--;
+
+      volume = constrain(volume, 0, 100);
+      player.setVolume(volume);
+
+      lastTurn = millis();
+    }
+  }
+
+  lastCLK = currentCLK;
+}
+
+ 
+// =========================================
+
+void handleStream()
+{
+  if (!client.connected())
+    connectToStream();
+
+  if (!client.available())
+    return;
+
+  if (!headerSkipped)
+  {
+    String line = client.readStringUntil('\n');
+
+    if (line == "\r")
+    {
+      headerSkipped = true;
+      Serial.println("Stream Start");
+    }
+  }
+  else
+  {
+    if (digitalRead(VS1053_DREQ))
+    {
+      int bytesread = client.read(mp3buff, sizeof(mp3buff));
+
+      if (bytesread > 0)
+        player.playChunk(mp3buff, bytesread);
+    }
+  }
+}
+
+// =========================================
+
+void loop()
+{
+  handleEncoder();
+  handleStream();
+
+  // Display nur alle 200ms aktualisieren
+  if (millis() - lastDisplay > 200)
+  {
+    drawScreen();
+    lastDisplay = millis();
+  }
+}
+
+
+---------------------------------------------------------------------------------------------------------------------
+2sender mit skip mit display mit poti alles
+
+
+
+
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <secrets.h>
+
+// DISPLAY
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25,
+  26,
+  27
+);
+
+// VS1053
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// ENCODER
+#define ENC_CLK 35
+#define ENC_DT  34
+
+// BUTTONS
+#define BTN_NEXT 21
+#define BTN_PREV 22
+
+int volume = 70;
+int lastCLK;
+
+// WIFI
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+// SENDER (HTTP kompatibel)
+const char* stationNames[]={
+  "Evergreens",
+  "Radio Paradise"
+};
+
+const char* hosts[]={
+  "ic.radiomonster.fm",
+  "stream.radioparadise.com"
+};
+
+const char* paths[]={
+  "/evergreens.ultra",
+  "/mp3-192"
+};
+
+int station=0;
+const int stationCount=2;
+
+const int httpPort=80;
+
+uint8_t mp3buff[512];
+bool headerSkipped=false;
+
+unsigned long lastDisplay=0;
+
+
+// DISPLAY
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  u8g2.setFont(u8g2_font_logisoso18_tf);
+  u8g2.drawStr(0,20,stationNames[station]);
+
+  char volText[20];
+  sprintf(volText,"%d %%",volume);
+
+  u8g2.setFont(u8g2_font_logisoso22_tf);
+  u8g2.drawStr(0,63,volText);
+
+  u8g2.sendBuffer();
+}
+
+
+// STREAM CONNECT
+void connectToStream()
+{
+  client.stop();
+  headerSkipped=false;
+
+  if(!client.connect(hosts[station],httpPort))
+  {
+    Serial.println("Stream Verbindung fehlgeschlagen");
+    return;
+  }
+
+  client.print(String("GET ") + paths[station] + " HTTP/1.1\r\n" +
+               "Host: " + hosts[station] + "\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("Stream verbunden");
+}
+
+
+// SETUP
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK,INPUT_PULLUP);
+  pinMode(ENC_DT,INPUT_PULLUP);
+
+  pinMode(BTN_NEXT,INPUT_PULLUP);
+  pinMode(BTN_PREV,INPUT_PULLUP);
+
+  lastCLK=digitalRead(ENC_CLK);
+
+  SPI.begin(14,-1,13,25);
+  u8g2.begin();
+
+  VSPIbus.begin(18,19,23,5);
+  VSPIbus.setFrequency(4000000);
+
+  if(!player.begin())
+    while(true);
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  WiFi.begin(ssid,password);
+
+  Serial.print("Verbinde WLAN");
+
+  while(WiFi.status()!=WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println(" WLAN verbunden");
+
+  connectToStream();
+}
+
+
+// ENCODER
+void handleEncoder()
+{
+  int currentCLK=digitalRead(ENC_CLK);
+
+  if(currentCLK!=lastCLK)
+  {
+    if(digitalRead(ENC_DT)!=currentCLK)
+      volume++;
+    else
+      volume--;
+
+    volume=constrain(volume,0,100);
+    player.setVolume(volume);
+  }
+
+  lastCLK=currentCLK;
+}
+
+
+// BUTTONS
+void handleButtons()
+{
+  static int lastNext=HIGH;
+  static int lastPrev=HIGH;
+
+  int nextState=digitalRead(BTN_NEXT);
+  int prevState=digitalRead(BTN_PREV);
+
+  if(lastNext==HIGH && nextState==LOW)
+  {
+    station++;
+    if(station>=stationCount) station=0;
+    connectToStream();
+  }
+
+  if(lastPrev==HIGH && prevState==LOW)
+  {
+    station--;
+    if(station<0) station=stationCount-1;
+    connectToStream();
+  }
+
+  lastNext=nextState;
+  lastPrev=prevState;
+}
+
+
+// STREAM
+void handleStream()
+{
+  if(!client.connected())
+    connectToStream();
+
+  if(!client.available())
+    return;
+
+  if(!headerSkipped)
+  {
+    String line=client.readStringUntil('\n');
+
+    if(line=="\r")
+      headerSkipped=true;
+  }
+  else
+  {
+    if(digitalRead(VS1053_DREQ))
+    {
+      int bytesread=client.read(mp3buff,sizeof(mp3buff));
+
+      if(bytesread>0)
+        player.playChunk(mp3buff,bytesread);
+    }
+  }
+}
+
+
+// LOOP
+void loop()
+{
+  handleEncoder();
+  handleButtons();
+  handleStream();
+
+  if(millis()-lastDisplay>200)
+  {
+    drawScreen();
+    lastDisplay=millis();
+  }
+}
+
+
+
+
+--------------------------------------------------------------------------------------------------------------------------
+schöner skip mit pseudo songdauer und volume und alles schön 
+
+
+
+
+
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <secrets.h>
+
+// DISPLAY
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25,
+  26,
+  27
+);
+
+// VS1053
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// ENCODER
+#define ENC_CLK 35
+#define ENC_DT  34
+
+// BUTTONS
+#define BTN_NEXT 21
+#define BTN_PREV 22
+
+int volume = 70;
+int lastCLK;
+
+// WIFI
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+// SENDER
+const char* stationNames[]={
+  "Evergreens",
+  "Paradise"
+};
+
+const char* hosts[]={
+  "ic.radiomonster.fm",
+  "stream.radioparadise.com"
+};
+
+const char* paths[]={
+  "/evergreens.ultra",
+  "/mp3-192"
+};
+
+int station=0;
+const int stationCount=2;
+
+const int httpPort=80;
+
+uint8_t mp3buff[512];
+bool headerSkipped=false;
+
+unsigned long lastDisplay=0;
+
+String streamTitle="";
+unsigned long songStart=0;
+
+
+// DISPLAY
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  // Sendername groß
+  u8g2.setFont(u8g2_font_logisoso16_tf);
+  u8g2.drawStr(0,18,stationNames[station]);
+
+  // Songtitel (groß, abgeschnitten wenn zu lang)
+  u8g2.setFont(u8g2_font_ncenB10_tr);
+
+  char titleLine[22];
+  strncpy(titleLine, streamTitle.c_str(), 21);
+  titleLine[21] = '\0';
+
+  u8g2.drawStr(0,40,titleLine);
+
+  // Lautstärke unten
+  char volText[12];
+  sprintf(volText,"VOL %d",volume);
+
+  u8g2.setFont(u8g2_font_7x14_tf);
+  u8g2.drawStr(0,62,volText);
+
+  // Fortschrittsbalken
+  int seconds=(millis()-songStart)/1000;
+  int barWidth=(seconds%60)*2;
+
+  u8g2.drawFrame(50,54,70,8);
+  u8g2.drawBox(50,54,barWidth,8);
+
+  u8g2.sendBuffer();
+}
+
+
+// STREAM CONNECT
+void connectToStream()
+{
+  client.stop();
+  headerSkipped=false;
+
+  if(!client.connect(hosts[station],httpPort))
+  {
+    Serial.println("Stream Verbindung fehlgeschlagen");
+    return;
+  }
+
+  client.print(String("GET ") + paths[station] + " HTTP/1.1\r\n" +
+               "Host: " + hosts[station] + "\r\n" +
+               "Icy-MetaData:1\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("Stream verbunden");
+}
+
+
+// SETUP
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK,INPUT_PULLUP);
+  pinMode(ENC_DT,INPUT_PULLUP);
+
+  pinMode(BTN_NEXT,INPUT_PULLUP);
+  pinMode(BTN_PREV,INPUT_PULLUP);
+
+  lastCLK=digitalRead(ENC_CLK);
+
+  SPI.begin(14,-1,13,25);
+  u8g2.begin();
+
+  VSPIbus.begin(18,19,23,5);
+  VSPIbus.setFrequency(4000000);
+
+  if(!player.begin())
+    while(true);
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  WiFi.begin(ssid,password);
+
+  Serial.print("Verbinde WLAN");
+
+  while(WiFi.status()!=WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println(" WLAN verbunden");
+
+  connectToStream();
+}
+
+
+// ENCODER
+void handleEncoder()
+{
+  int currentCLK=digitalRead(ENC_CLK);
+
+  if(currentCLK!=lastCLK)
+  {
+    if(digitalRead(ENC_DT)!=currentCLK)
+      volume++;
+    else
+      volume--;
+
+    volume=constrain(volume,0,100);
+    player.setVolume(volume);
+  }
+
+  lastCLK=currentCLK;
+}
+
+
+// BUTTONS
+void handleButtons()
+{
+  static int lastNext=HIGH;
+  static int lastPrev=HIGH;
+
+  int nextState=digitalRead(BTN_NEXT);
+  int prevState=digitalRead(BTN_PREV);
+
+  if(lastNext==HIGH && nextState==LOW)
+  {
+    station++;
+    if(station>=stationCount) station=0;
+    connectToStream();
+  }
+
+  if(lastPrev==HIGH && prevState==LOW)
+  {
+    station--;
+    if(station<0) station=stationCount-1;
+    connectToStream();
+  }
+
+  lastNext=nextState;
+  lastPrev=prevState;
+}
+
+
+// STREAM
+void handleStream()
+{
+  if(!client.connected())
+    connectToStream();
+
+  if(!client.available())
+    return;
+
+  if(!headerSkipped)
+  {
+    String line=client.readStringUntil('\n');
+
+    if(line=="\r")
+      headerSkipped=true;
+
+    if(line.startsWith("StreamTitle"))
+    {
+      int start=line.indexOf("='");
+      int end=line.indexOf("';");
+
+      if(start>0 && end>start)
+      {
+        streamTitle=line.substring(start+2,end);
+        songStart=millis();
+      }
+    }
+  }
+  else
+  {
+    if(digitalRead(VS1053_DREQ))
+    {
+      int bytesread=client.read(mp3buff,sizeof(mp3buff));
+
+      if(bytesread>0)
+        player.playChunk(mp3buff,bytesread);
+    }
+  }
+}
+
+
+// LOOP
+void loop()
+{
+  handleEncoder();
+  handleButtons();
+  handleStream();
+
+  if(millis()-lastDisplay>200)
+  {
+    drawScreen();
+    lastDisplay=millis();
+  }
+}
+
+
+
+
+--------------------------------------------------------------------------------------------------------------------
+last http try mit volume balken und skip radio 
+
+
+
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <secrets.h>
+
+// DISPLAY
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25,
+  26,
+  27
+);
+
+// VS1053
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// ENCODER
+#define ENC_CLK 35
+#define ENC_DT  34
+
+// BUTTONS
+#define BTN_NEXT 21
+#define BTN_PREV 22
+
+int volume = 70;
+int lastCLK;
+
+// WIFI
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+// SENDER
+const char* stationNames[]={
+  "Evergreens",
+  "Paradise"
+};
+
+const char* hosts[]={
+  "ic.radiomonster.fm",
+  "stream.radioparadise.com"
+};
+
+const char* paths[]={
+  "/evergreens.ultra",
+  "/mp3-192"
+};
+
+int station=0;
+const int stationCount=2;
+
+const int httpPort=80;
+
+uint8_t mp3buff[512];
+bool headerSkipped=false;
+
+unsigned long lastDisplay=0;
+
+// SONGTITLE
+String streamTitle="";
+
+// Scroll
+int scrollX=0;
+unsigned long lastScroll=0;
+
+
+// DISPLAY
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  // Sendername
+  u8g2.setFont(u8g2_font_logisoso16_tf);
+  u8g2.drawStr(0,18,stationNames[station]);
+
+  // Songtitel scrollend
+  u8g2.setFont(u8g2_font_ncenB10_tr);
+
+  int titleWidth=u8g2.getStrWidth(streamTitle.c_str());
+
+  u8g2.setClipWindow(0,22,128,45);
+  u8g2.drawStr(-scrollX,40,streamTitle.c_str());
+  u8g2.setMaxClipWindow();
+
+  // Lautstärke Balken
+  int barWidth = map(volume,0,100,0,120);
+
+  u8g2.drawFrame(4,52,120,10);
+  u8g2.drawBox(4,52,barWidth,10);
+
+  u8g2.sendBuffer();
+}
+
+
+// STREAM CONNECT
+void connectToStream()
+{
+  client.stop();
+  headerSkipped=false;
+
+  if(!client.connect(hosts[station],httpPort))
+    return;
+
+  client.print(String("GET ") + paths[station] + " HTTP/1.1\r\n" +
+               "Host: " + hosts[station] + "\r\n" +
+               "Icy-MetaData:1\r\n" +
+               "Connection: close\r\n\r\n");
+}
+
+
+// SETUP
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK,INPUT_PULLUP);
+  pinMode(ENC_DT,INPUT_PULLUP);
+
+  pinMode(BTN_NEXT,INPUT_PULLUP);
+  pinMode(BTN_PREV,INPUT_PULLUP);
+
+  lastCLK=digitalRead(ENC_CLK);
+
+  SPI.begin(14,-1,13,25);
+  u8g2.begin();
+
+  VSPIbus.begin(18,19,23,5);
+  VSPIbus.setFrequency(4000000);
+
+  if(!player.begin())
+    while(true);
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  WiFi.begin(ssid,password);
+
+  while(WiFi.status()!=WL_CONNECTED)
+    delay(500);
+
+  connectToStream();
+}
+
+
+// ENCODER
+void handleEncoder()
+{
+  int currentCLK=digitalRead(ENC_CLK);
+
+  if(currentCLK!=lastCLK)
+  {
+    if(digitalRead(ENC_DT)!=currentCLK)
+      volume++;
+    else
+      volume--;
+
+    volume=constrain(volume,0,100);
+    player.setVolume(volume);
+  }
+
+  lastCLK=currentCLK;
+}
+
+
+// BUTTONS
+void handleButtons()
+{
+  static int lastNext=HIGH;
+  static int lastPrev=HIGH;
+
+  int nextState=digitalRead(BTN_NEXT);
+  int prevState=digitalRead(BTN_PREV);
+
+  if(lastNext==HIGH && nextState==LOW)
+  {
+    station++;
+    if(station>=stationCount) station=0;
+    connectToStream();
+  }
+
+  if(lastPrev==HIGH && prevState==LOW)
+  {
+    station--;
+    if(station<0) station=stationCount-1;
+    connectToStream();
+  }
+
+  lastNext=nextState;
+  lastPrev=prevState;
+}
+
+
+// STREAM
+void handleStream()
+{
+  if(!client.connected())
+    connectToStream();
+
+  if(!client.available())
+    return;
+
+  if(!headerSkipped)
+  {
+    String line=client.readStringUntil('\n');
+
+    if(line=="\r")
+      headerSkipped=true;
+
+    if(line.startsWith("StreamTitle"))
+    {
+      int start=line.indexOf("='");
+      int end=line.indexOf("';");
+
+      if(start>0 && end>start)
+      {
+        streamTitle=line.substring(start+2,end);
+        scrollX=0;
+      }
+    }
+  }
+  else
+  {
+    if(digitalRead(VS1053_DREQ))
+    {
+      int bytesread=client.read(mp3buff,sizeof(mp3buff));
+
+      if(bytesread>0)
+        player.playChunk(mp3buff,bytesread);
+    }
+  }
+}
+
+
+// SCROLL TEXT
+void handleScroll()
+{
+  if(millis()-lastScroll<80) return;
+
+  int textWidth=u8g2.getStrWidth(streamTitle.c_str());
+
+  if(textWidth>128)
+  {
+    scrollX++;
+
+    if(scrollX>textWidth+20)
+      scrollX=0;
+  }
+
+  lastScroll=millis();
+}
+
+
+// LOOP
+void loop()
+{
+  handleEncoder();
+  handleButtons();
+  handleStream();
+  handleScroll();
+
+  if(millis()-lastDisplay>50)
+  {
+    drawScreen();
+    lastDisplay=millis();
+  }
+}
+
+
+
+----------------------------------------------------------------------------------------------------------
+HTTPS geht nicht also nur evergreens und paradiso 
+
+
+
+
+
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <secrets.h>
+
+// DISPLAY
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25,
+  26,
+  27
+);
+
+// VS1053
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// ENCODER
+#define ENC_CLK 35
+#define ENC_DT  34
+
+// BUTTONS
+#define BTN_NEXT 21
+#define BTN_PREV 22
+
+int volume = 70;
+int lastCLK;
+
+// WIFI
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+// STREAMS
+const char* stationNames[]={
+  "Evergreens",
+  "Paradise"
+};
+
+const char* hosts[]={
+  "ic.radiomonster.fm",
+  "stream.radioparadise.com"
+};
+
+const char* paths[]={
+  "/evergreens.ultra",
+  "/mp3-192"
+};
+
+int station=0;
+const int stationCount=2;
+
+const int httpPort=80;
+
+// AUDIO BUFFER
+uint8_t mp3buff[512];
+
+bool headerSkipped=false;
+
+unsigned long lastDisplay=0;
+
+// BUTTON DEBOUNCE
+unsigned long lastButtonTime=0;
+const int debounce=50;
+
+
+// DISPLAY
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  u8g2.setFont(u8g2_font_logisoso16_tf);
+  u8g2.drawStr(0,18,stationNames[station]);
+
+  char volText[20];
+  sprintf(volText,"VOL %d%%",volume);
+
+  u8g2.setFont(u8g2_font_ncenB10_tr);
+  u8g2.drawStr(0,40,volText);
+
+  int barWidth = map(volume,0,100,0,120);
+
+  u8g2.drawFrame(4,52,120,10);
+  u8g2.drawBox(4,52,barWidth,10);
+
+  u8g2.sendBuffer();
+}
+
+
+// STREAM CONNECT
+void connectToStream()
+{
+  client.stop();
+  headerSkipped=false;
+
+  if(!client.connect(hosts[station],httpPort))
+    return;
+
+  client.print(String("GET ") + paths[station] + " HTTP/1.1\r\n" +
+               "Host: " + hosts[station] + "\r\n" +
+               "Connection: close\r\n\r\n");
+}
+
+
+// SETUP
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK,INPUT_PULLUP);
+  pinMode(ENC_DT,INPUT_PULLUP);
+
+  pinMode(BTN_NEXT,INPUT_PULLUP);
+  pinMode(BTN_PREV,INPUT_PULLUP);
+
+  lastCLK=digitalRead(ENC_CLK);
+
+  SPI.begin(14,-1,13,25);
+  u8g2.begin();
+
+  VSPIbus.begin(18,19,23,5);
+  VSPIbus.setFrequency(8000000);
+
+  if(!player.begin())
+    while(true);
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  WiFi.begin(ssid,password);
+
+  while(WiFi.status()!=WL_CONNECTED)
+    delay(500);
+
+  connectToStream();
+}
+
+
+// ENCODER
+void handleEncoder()
+{
+  int currentCLK=digitalRead(ENC_CLK);
+
+  if(currentCLK!=lastCLK)
+  {
+    if(digitalRead(ENC_DT)!=currentCLK)
+      volume++;
+    else
+      volume--;
+
+    volume=constrain(volume,0,100);
+    player.setVolume(volume);
+  }
+
+  lastCLK=currentCLK;
+}
+
+
+// BUTTONS
+void handleButtons()
+{
+  if(millis()-lastButtonTime<debounce) return;
+
+  if(digitalRead(BTN_NEXT)==LOW)
+  {
+    station++;
+    if(station>=stationCount) station=0;
+    connectToStream();
+    lastButtonTime=millis();
+  }
+
+  if(digitalRead(BTN_PREV)==LOW)
+  {
+    station--;
+    if(station<0) station=stationCount-1;
+    connectToStream();
+    lastButtonTime=millis();
+  }
+}
+
+
+// STREAM
+void handleStream()
+{
+  if(!client.connected())
+    connectToStream();
+
+  if(!client.available())
+    return;
+
+  if(!headerSkipped)
+  {
+    String line=client.readStringUntil('\n');
+
+    if(line=="\r")
+      headerSkipped=true;
+  }
+  else
+  {
+    if(digitalRead(VS1053_DREQ))
+    {
+      int bytesread=client.read(mp3buff,sizeof(mp3buff));
+
+      if(bytesread>0)
+        player.playChunk(mp3buff,bytesread);
+    }
+  }
+}
+
+
+// LOOP
+void loop()
+{
+  handleEncoder();
+  handleButtons();
+  handleStream();
+
+  if(millis()-lastDisplay>200)
+  {
+    drawScreen();
+    lastDisplay=millis();
+  }
+}
+
+
+
+
+-----------------------------------------------------------------------------------------------------------------
+mute button wlan zeichen 2 sender passt alles letzter code 
+
+
+
+
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <secrets.h>
+
+// DISPLAY
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25, // CS
+  26, // DC
+  27  // RES
+);
+
+// VS1053
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// ENCODER
+#define ENC_CLK 35
+#define ENC_DT  34
+#define ENC_SW  32
+
+// BUTTONS
+#define BTN_NEXT 21
+#define BTN_PREV 22
+
+int volume = 70;
+int lastCLK;
+bool muted=false;
+int lastVolume=70;
+
+// WIFI
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+// STREAMS
+const char* stationNames[]={
+  "Evergreens",
+  "Paradise"
+};
+
+const char* hosts[]={
+  "ic.radiomonster.fm",
+  "stream.radioparadise.com"
+};
+
+const char* paths[]={
+  "/evergreens.ultra",
+  "/mp3-192"
+};
+
+int station=0;
+const int stationCount=2;
+
+const int httpPort=80;
+
+// AUDIO BUFFER
+uint8_t mp3buff[512];
+
+bool headerSkipped=false;
+
+unsigned long lastDisplay=0;
+
+// BUTTON DEBOUNCE
+unsigned long lastButtonTime=0;
+const int debounce=50;
+
+
+// WIFI SIGNAL ICON
+void drawWifi()
+{
+  int rssi = WiFi.RSSI();
+  int bars = 0;
+
+  if(rssi > -55) bars = 4;
+  else if(rssi > -65) bars = 3;
+  else if(rssi > -75) bars = 2;
+  else if(rssi > -85) bars = 1;
+  else bars = 0;
+
+  for(int i=0;i<bars;i++)
+  {
+    u8g2.drawBox(120 + i*2, 2 + (4-i)*2, 2, i*2+2);
+  }
+}
+
+
+// DISPLAY
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  // Sender
+  u8g2.setFont(u8g2_font_logisoso18_tf);
+  u8g2.drawStr(0,20,stationNames[station]);
+
+  // Lautstärke Text
+  char volText[20];
+  sprintf(volText,"%d %%",volume);
+
+  u8g2.setFont(u8g2_font_ncenB14_tr);
+  u8g2.drawStr(0,42,volText);
+
+  // Lautstärke Balken
+  int barWidth = map(volume,0,100,0,120);
+
+  u8g2.drawFrame(4,50,120,10);
+  u8g2.drawBox(4,50,barWidth,10);
+
+  drawWifi();
+
+  u8g2.sendBuffer();
+}
+
+
+// STREAM CONNECT
+void connectToStream()
+{
+  client.stop();
+  headerSkipped=false;
+
+  if(!client.connect(hosts[station],httpPort))
+    return;
+
+  client.print(String("GET ") + paths[station] + " HTTP/1.1\r\n" +
+               "Host: " + hosts[station] + "\r\n" +
+               "Connection: close\r\n\r\n");
+}
+
+
+// SETUP
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK,INPUT_PULLUP);
+  pinMode(ENC_DT,INPUT_PULLUP);
+  pinMode(ENC_SW,INPUT_PULLUP);
+
+  pinMode(BTN_NEXT,INPUT_PULLUP);
+  pinMode(BTN_PREV,INPUT_PULLUP);
+
+  lastCLK=digitalRead(ENC_CLK);
+
+  SPI.begin(14,-1,13,25);
+  u8g2.begin();
+
+  VSPIbus.begin(18,19,23,5);
+  VSPIbus.setFrequency(8000000);
+
+  if(!player.begin())
+    while(true);
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  WiFi.begin(ssid,password);
+
+  while(WiFi.status()!=WL_CONNECTED)
+    delay(500);
+
+  connectToStream();
+}
+
+
+// ENCODER ROTATION
+void handleEncoder()
+{
+  int currentCLK=digitalRead(ENC_CLK);
+
+  if(currentCLK!=lastCLK)
+  {
+    if(digitalRead(ENC_DT)!=currentCLK)
+      volume++;
+    else
+      volume--;
+
+    volume=constrain(volume,0,100);
+    player.setVolume(volume);
+  }
+
+  lastCLK=currentCLK;
+}
+
+
+// ENCODER BUTTON (MUTE)
+void handleEncoderButton()
+{
+  static bool lastState=HIGH;
+  bool state=digitalRead(ENC_SW);
+
+  if(lastState==HIGH && state==LOW)
+  {
+    if(!muted)
+    {
+      lastVolume=volume;
+      volume=0;
+      muted=true;
+    }
+    else
+    {
+      volume=lastVolume;
+      muted=false;
+    }
+
+    player.setVolume(volume);
+  }
+
+  lastState=state;
+}
+
+
+// BUTTONS
+void handleButtons()
+{
+  if(millis()-lastButtonTime<debounce) return;
+
+  if(digitalRead(BTN_NEXT)==LOW)
+  {
+    station++;
+    if(station>=stationCount) station=0;
+    connectToStream();
+    lastButtonTime=millis();
+  }
+
+  if(digitalRead(BTN_PREV)==LOW)
+  {
+    station--;
+    if(station<0) station=stationCount-1;
+    connectToStream();
+    lastButtonTime=millis();
+  }
+}
+
+
+// STREAM
+void handleStream()
+{
+  if(!client.connected())
+    connectToStream();
+
+  if(!client.available())
+    return;
+
+  if(!headerSkipped)
+  {
+    String line=client.readStringUntil('\n');
+
+    if(line=="\r")
+      headerSkipped=true;
+  }
+  else
+  {
+    if(digitalRead(VS1053_DREQ))
+    {
+      int bytesread=client.read(mp3buff,sizeof(mp3buff));
+
+      if(bytesread>0)
+        player.playChunk(mp3buff,bytesread);
+    }
+  }
+}
+
+
+// LOOP
+void loop()
+{
+  handleEncoder();
+  handleEncoderButton();
+  handleButtons();
+  handleStream();
+
+  if(millis()-lastDisplay>200)
+  {
+    drawScreen();
+    lastDisplay=millis();
+  }
+}
+
+
+
+
+-----------------------------------------------------------------------------------------------------------------
+Bootscreen „WEBRADIO by Nico“ (3 Sekunden)
+
+Volume-Icon links oben
+
+WiFi-Icon rechts oben
+
+Uhrzeit in der Mitte
+
+Sendername (Evergreens / Paradise) scrollt von rechts nach links
+
+Volume-Prozent + Volume-Bar
+
+Encoder = Lautstärke
+
+Encoder drücken = Mute
+
+Buttons = Sender wechseln
+
+
+
+
+
+
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SPI.h>
+#include <U8g2lib.h>
+#include <VS1053Driver.h>
+#include <time.h>
+#include <secrets.h>
+
+// DISPLAY
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(
+  U8G2_R0,
+  25,
+  26,
+  27
+);
+
+// VS1053
+#define VS1053_CS    5
+#define VS1053_DCS   16
+#define VS1053_DREQ  4
+#define VS1053_RST   17
+
+SPIClass VSPIbus(VSPI);
+VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ, VS1053_RST, VSPIbus);
+
+// INPUT
+#define ENC_CLK 35
+#define ENC_DT  34
+#define ENC_SW  32
+
+#define BTN_NEXT 21
+#define BTN_PREV 22
+
+int volume = 70;
+int lastCLK;
+
+bool muted=false;
+int lastVolume=70;
+
+// WIFI
+WiFiClient client;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASS;
+
+// STREAM
+const char* stationNames[]={
+  "Evergreens",
+  "Paradise"
+};
+
+const char* hosts[]={
+  "ic.radiomonster.fm",
+  "stream.radioparadise.com"
+};
+
+const char* paths[]={
+  "/evergreens.ultra",
+  "/mp3-192"
+};
+
+int station=0;
+const int stationCount=2;
+
+const int httpPort=80;
+
+uint8_t mp3buff[512];
+bool headerSkipped=false;
+
+// DISPLAY STATE
+int scrollX=128;
+unsigned long lastScroll=0;
+unsigned long lastDisplay=0;
+
+// TIME
+const char* ntpServer="pool.ntp.org";
+const long gmtOffset_sec=3600;
+const int daylightOffset_sec=3600;
+
+
+// BOOTSCREEN
+void bootScreen()
+{
+  u8g2.clearBuffer();
+
+  u8g2.setFont(u8g2_font_logisoso20_tf);
+  u8g2.drawStr(6,32,"WEBRADIO");
+
+  u8g2.setFont(u8g2_font_6x12_tf);
+  u8g2.drawStr(36,52,"by Nico");
+
+  u8g2.sendBuffer();
+}
+
+
+// VOLUME ICON
+void drawVolumeIcon(int x,int y)
+{
+  u8g2.drawBox(x,y+5,4,8);
+  u8g2.drawTriangle(x+4,y+5,x+4,y+13,x+9,y+9);
+
+  if(!muted)
+  {
+    u8g2.drawArc(x+11,y+9,3,300,60);
+    u8g2.drawArc(x+11,y+9,5,300,60);
+  }
+  else
+  {
+    u8g2.drawLine(x+10,y+4,x+16,y+14);
+  }
+}
+
+
+// WIFI ICON
+void drawWifi()
+{
+  int x=112;
+  int y=2;
+
+  u8g2.drawDisc(x+6,y+14,1);
+  u8g2.drawArc(x+6,y+14,4,200,340);
+  u8g2.drawArc(x+6,y+14,7,200,340);
+  u8g2.drawArc(x+6,y+14,10,200,340);
+}
+
+
+// TIME
+String getTimeString()
+{
+  struct tm timeinfo;
+
+  if(!getLocalTime(&timeinfo))
+    return "--:--";
+
+  char buffer[6];
+  strftime(buffer,6,"%H:%M",&timeinfo);
+
+  return String(buffer);
+}
+
+
+// DISPLAY
+void drawScreen()
+{
+  u8g2.clearBuffer();
+
+  drawVolumeIcon(0,2);
+  drawWifi();
+
+  // Uhr
+  String timeStr=getTimeString();
+
+  u8g2.setFont(u8g2_font_logisoso16_tf);
+  int w=u8g2.getStrWidth(timeStr.c_str());
+
+  u8g2.drawStr((128-w)/2,18,timeStr.c_str());
+
+  // Sender scroll
+  const char* name=stationNames[station];
+
+  u8g2.setFont(u8g2_font_helvB12_tr);
+
+  int textWidth=u8g2.getStrWidth(name);
+
+  u8g2.setClipWindow(0,24,128,48);
+  u8g2.drawStr(scrollX,40,name);
+  u8g2.setMaxClipWindow();
+
+  if(millis()-lastScroll>35)
+  {
+    scrollX--;
+
+    if(scrollX<-textWidth)
+      scrollX=128;
+
+    lastScroll=millis();
+  }
+
+  // Volume %
+  char volText[10];
+  sprintf(volText,"%d%%",volume);
+
+  u8g2.setFont(u8g2_font_6x12_tf);
+  u8g2.drawStr(0,62,volText);
+
+  // Volume Bar
+  int barWidth=map(volume,0,100,0,100);
+
+  u8g2.drawFrame(25,54,100,8);
+  u8g2.drawBox(25,54,barWidth,8);
+
+  u8g2.sendBuffer();
+}
+
+
+// STREAM CONNECT
+void connectToStream()
+{
+  client.stop();
+  headerSkipped=false;
+
+  if(!client.connect(hosts[station],httpPort))
+    return;
+
+  client.print(String("GET ") + paths[station] + " HTTP/1.1\r\n" +
+               "Host: " + hosts[station] + "\r\n" +
+               "Connection: close\r\n\r\n");
+}
+
+
+void handleStream()
+{
+  if(!client.connected())
+    connectToStream();
+
+  if(!client.available())
+    return;
+
+  if(!headerSkipped)
+  {
+    String line=client.readStringUntil('\n');
+
+    if(line=="\r")
+      headerSkipped=true;
+  }
+  else
+  {
+    if(digitalRead(VS1053_DREQ))
+    {
+      int bytesread=client.read(mp3buff,sizeof(mp3buff));
+
+      if(bytesread>0)
+        player.playChunk(mp3buff,bytesread);
+    }
+  }
+}
+
+
+// ENCODER
+void handleEncoder()
+{
+  int currentCLK=digitalRead(ENC_CLK);
+
+  if(currentCLK!=lastCLK)
+  {
+    if(digitalRead(ENC_DT)!=currentCLK)
+      volume++;
+    else
+      volume--;
+
+    volume=constrain(volume,0,100);
+
+    player.setVolume(volume);
+  }
+
+  lastCLK=currentCLK;
+}
+
+
+// ENCODER BUTTON
+void handleEncoderButton()
+{
+  static bool lastState=HIGH;
+  bool state=digitalRead(ENC_SW);
+
+  if(lastState==HIGH && state==LOW)
+  {
+    if(!muted)
+    {
+      lastVolume=volume;
+      volume=0;
+      muted=true;
+    }
+    else
+    {
+      volume=lastVolume;
+      muted=false;
+    }
+
+    player.setVolume(volume);
+  }
+
+  lastState=state;
+}
+
+
+// BUTTONS
+void handleButtons()
+{
+  static int lastNext=HIGH;
+  static int lastPrev=HIGH;
+
+  int nextState=digitalRead(BTN_NEXT);
+  int prevState=digitalRead(BTN_PREV);
+
+  if(lastNext==HIGH && nextState==LOW)
+  {
+    station++;
+    if(station>=stationCount) station=0;
+
+    scrollX=128;
+    connectToStream();
+  }
+
+  if(lastPrev==HIGH && prevState==LOW)
+  {
+    station--;
+    if(station<0) station=stationCount-1;
+
+    scrollX=128;
+    connectToStream();
+  }
+
+  lastNext=nextState;
+  lastPrev=prevState;
+}
+
+
+// SETUP
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(ENC_CLK,INPUT_PULLUP);
+  pinMode(ENC_DT,INPUT_PULLUP);
+  pinMode(ENC_SW,INPUT_PULLUP);
+
+  pinMode(BTN_NEXT,INPUT_PULLUP);
+  pinMode(BTN_PREV,INPUT_PULLUP);
+
+  lastCLK=digitalRead(ENC_CLK);
+
+  SPI.begin(14,-1,13,25);
+  u8g2.begin();
+
+  // BOOTSCREEN
+  bootScreen();
+  delay(3000);
+
+  VSPIbus.begin(18,19,23,5);
+  VSPIbus.setFrequency(8000000);
+
+  if(!player.begin())
+    while(true);
+
+  player.switchToMp3Mode();
+  player.setVolume(volume);
+
+  WiFi.begin(ssid,password);
+
+  while(WiFi.status()!=WL_CONNECTED)
+    delay(500);
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  connectToStream();
+}
+
+
+// LOOP
+void loop()
+{
+  handleEncoder();
+  handleEncoderButton();
+  handleButtons();
+  handleStream();
+
+  if(millis()-lastDisplay>120)
+  {
+    drawScreen();
+    lastDisplay=millis();
+  }
+}
+
+
+---------------------------------------------------------------------------------------------
+
+
+
+
+
